@@ -1,0 +1,13 @@
+# 文件职责：cpolar 隧道配置示例；仅说明入口转发，真实认证令牌不应提交到源码。
+# Reference only. The installed Windows service uses %USERPROFILE%/.cpolar/cpolar.yml.
+# Authenticate through http://127.0.0.1:9200; never commit the generated token.
+region: cn_top
+client_dashboard_addr: 127.0.0.1:9200
+web_addr: 127.0.0.1:4040
+log_level: warn
+tunnels:
+  human-ai-community:
+    proto: http
+    addr: https://localhost:9443
+    bind_tls: true
+    inspect: false

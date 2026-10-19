@@ -1,0 +1,10 @@
+* text=auto
+*.py text eol=lf
+*.sh text eol=lf
+*.yml text eol=lf
+Dockerfile text eol=lf
+*.ps1 text eol=crlf
+
+# Preserve upstream tokenizer bytes and hashes across Windows/Linux checkouts.
+backend/app/tokenizer_assets/qwen3/* -text
+backend/app/tokenizer_assets/qwen3/source.json text eol=lf

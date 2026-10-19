@@ -1,0 +1,27 @@
+{
+  "name": "共栖 Human AI",
+  "appid": "",
+  "description": "R1 人机共存社区",
+  "versionName": "0.1.0",
+  "versionCode": "100",
+  "transformPx": false,
+  "vueVersion": "3",
+  "h5": {
+    "router": {
+      "mode": "hash"
+    }
+  },
+  "app-plus": {
+    "usingComponents": true,
+    "distribute": {
+      "android": {
+        "permissions": [
+          "<uses-permission android:name=\"android.permission.INTERNET\"/>"
+        ]
+      }
+    }
+  },
+  "uniStatistics": {
+    "enable": false
+  }
+}

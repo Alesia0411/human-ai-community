@@ -1,0 +1,135 @@
+# 文件职责：Win11 Docker Desktop 服务编排；后端共用配置锚点，数据卷独立于容器生命周期。
+name: human-ai-community
+# YAML 锚点复用 API、Worker、Beat 的镜像与环境；不会为每个角色创建容器。
+x-backend: &backend
+  image: human-ai-community-backend:local
+  build:
+    context: ..
+    dockerfile: backend/Dockerfile
+  restart: unless-stopped
+  # HAI_ 变量覆盖后端 Settings；密钥从私有 secret 挂载读取，不写入镜像。
+  environment: &environment
+    HAI_DATABASE_URL: mysql+pymysql://hai:${MYSQL_PASSWORD:?Run init.ps1 first}@mysql:3306/human_ai?charset=utf8mb4
+    # Redis 用作 Celery broker；聊天正文、授权与任务结算仍以 SQL 为准。
+    HAI_REDIS_URL: redis://redis:6379/0
+    HAI_SECRET_FILE: /run/secrets/app_key
+    HAI_INVITE_CODE: ${HAI_INVITE_CODE:?Set an invite code}
+    HAI_DEMO_MODE: ${HAI_DEMO_MODE:-false}
+    # 容器模式由 Celery 扫描任务；关闭 API 内置扫描以避免重复调度。
+    HAI_INLINE_TASKS: 'false'
+    HAI_COOKIE_SECURE: 'true'
+    HAI_ALLOWED_ORIGINS: ${HAI_ALLOWED_ORIGINS:-https://localhost:9443}
+    HAI_MEDIA_DIR: /data/media
+    HAI_CHAT_RECORD_DIR: /data/chat-records
+    HAI_OLLAMA_CONTEXT_LENGTH: ${HAI_OLLAMA_CONTEXT_LENGTH:-8192}
+    HAI_CHECKPOINT_PATH: /data/checkpoints/graph.sqlite
+    HAI_QDRANT_URL: http://qdrant:6333
+    HAI_RETRIEVAL_MODE: ${HAI_RETRIEVAL_MODE:-vector}
+    HAI_PROACTIVE_GRACE_SECONDS: ${HAI_PROACTIVE_GRACE_SECONDS:-300}
+    HAI_AI_STOPPED: ${HAI_AI_STOPPED:-false}
+    LANGCHAIN_TRACING_V2: 'false'
+    LANGSMITH_TRACING: 'false'
+  secrets:
+    - app_key
+  volumes:
+    - media_data:/data/media
+    - ./chat-records:/data/chat-records
+    - checkpoint_data:/data/checkpoints
+  depends_on:
+    mysql:
+      condition: service_healthy
+    redis:
+      condition: service_healthy
+    qdrant:
+      condition: service_started
+
+services:
+  ollama:
+    image: ollama/ollama@sha256:292ee7945dfc3d5840a181f3ab86fedb1e66703e02c8af98b50f4da56b7e278c
+    # 仅启用 local-ai profile 时启动本地推理服务。
+    profiles: [local-ai]
+    restart: unless-stopped
+    # 为本地推理请求 GPU；要求 Docker Desktop 与宿主 GPU 驱动支持。
+    gpus: all
+    environment:
+      OLLAMA_CONTEXT_LENGTH: ${HAI_OLLAMA_CONTEXT_LENGTH:-8192}
+      OLLAMA_NUM_PARALLEL: '1'
+      OLLAMA_MAX_LOADED_MODELS: '1'
+      OLLAMA_KEEP_ALIVE: 10m
+      OLLAMA_NO_CLOUD: '1'
+    ports:
+      - '127.0.0.1:21434:11434'
+    volumes:
+      - ./models/ollama:/root/.ollama
+    healthcheck:
+      test: [CMD, ollama, list]
+      interval: 15s
+      timeout: 10s
+      retries: 10
+  qdrant:
+    image: qdrant/qdrant:v1.19.1
+    restart: unless-stopped
+    volumes:
+      - qdrant_data:/qdrant/storage
+  mysql:
+    image: mysql:8.4
+    restart: unless-stopped
+    environment:
+      MYSQL_DATABASE: human_ai
+      MYSQL_USER: hai
+      MYSQL_PASSWORD: ${MYSQL_PASSWORD}
+      MYSQL_ROOT_PASSWORD: ${MYSQL_ROOT_PASSWORD}
+    volumes:
+      - mysql_data:/var/lib/mysql
+    healthcheck:
+      test: [CMD-SHELL, 'MYSQL_PWD="$$MYSQL_PASSWORD" mysql -h 127.0.0.1 -u hai human_ai -e "SELECT 1" >/dev/null 2>&1']
+      interval: 5s
+      timeout: 5s
+      retries: 30
+  redis:
+    image: redis:7.4-alpine
+    restart: unless-stopped
+    command: [redis-server, --appendonly, 'yes']
+    volumes:
+      - redis_data:/data
+    healthcheck:
+      test: [CMD, redis-cli, ping]
+      interval: 5s
+      retries: 10
+  api:
+    <<: *backend
+    healthcheck:
+      test: [CMD, python, -c, "import urllib.request; urllib.request.urlopen('http://localhost:8000/api/v1/health/ready')"]
+      interval: 10s
+      retries: 10
+  # 单消费者执行后台任务；消费状态由 SQL 条件更新和调用账本保护。
+  agent-worker:
+    <<: *backend
+    command: [celery, -A, app.worker.celery, worker, --loglevel=WARNING, --concurrency=1]
+  # 定时投递扫描任务，应只保留一个 Beat 实例。
+  beat:
+    <<: *backend
+    command: [celery, -A, app.worker.celery, beat, --loglevel=WARNING, --schedule=/tmp/celerybeat-schedule]
+  # 对外只发布 HTTPS 入口；MySQL、Redis、API 等通过内部服务名通信。
+  nginx:
+    build:
+      context: ..
+      dockerfile: frontend/Dockerfile
+    restart: unless-stopped
+    ports:
+      - '${HAI_BIND:-127.0.0.1}:${HAI_HTTPS_PORT:-9443}:443'
+    volumes:
+      - ./certs:/etc/nginx/certs:ro
+    depends_on:
+      api:
+        condition: service_healthy
+
+volumes:
+  mysql_data:
+  redis_data:
+  media_data:
+  checkpoint_data:
+  qdrant_data:
+secrets:
+  app_key:
+    file: ./secrets/app.key

@@ -1,0 +1,2 @@
+case_id,split,role_id,definition_version,answer_source,model_version,anonymous_variant,reviewer_id,tone_1_to_5,boundary_1_to_5,citation_supported_count,citation_total,unsupported_claim_count,claim_total,evidence_notes
+example-do-not-score,test,camp,manual-v1,,,,,,,,,,,
